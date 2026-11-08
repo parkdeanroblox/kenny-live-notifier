@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 
+import requests
 from TikTokLive import TikTokLiveClient
 from TikTokLive.client.errors import UserNotFoundError
 
