@@ -52,23 +52,35 @@ def send_botghost_notification() -> None:
 
 
 async def check_live_status(client: TikTokLiveClient) -> bool:
-    """Check by username first, then resolve the public LIVE page to a room ID."""
+    """Try the normal status check, then TikTok's HTML and API room-ID routes."""
     try:
         return await client.is_live()
     except UserNotFoundError as original_error:
         print(
             "TikTok's username status endpoint rejected this account. "
-            "Trying TikTokLive's documented LIVE-page room-ID route."
+            "Trying alternate room-ID routes."
         )
+
+        html_error = None
         try:
             room_id = await client.web.fetch_room_id_from_html(USERNAME)
+            print("Resolved room ID from TikTok's LIVE page.")
             return await client.web.fetch_is_live(room_id=int(room_id))
-        except Exception as fallback_error:
+        except Exception as exc:
+            html_error = exc
+            print(f"TikTok LIVE-page route failed: {exc}")
+
+        try:
+            room_id = await client.web.fetch_room_id_from_api(USERNAME)
+            print("Resolved room ID from TikTok's API route.")
+            return await client.web.fetch_is_live(room_id=int(room_id))
+        except Exception as api_error:
             raise RuntimeError(
-                "Both TikTok LIVE checks failed. "
+                "All TikTok LIVE status routes failed. "
                 f"Username check: {original_error}. "
-                f"LIVE-page room-ID check: {fallback_error}"
-            ) from fallback_error
+                f"HTML route: {html_error}. "
+                f"API room-ID route: {api_error}"
+            ) from api_error
 
 async def main() -> None:
     client = TikTokLiveClient(unique_id=f"@{USERNAME}")
