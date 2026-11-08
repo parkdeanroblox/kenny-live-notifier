@@ -6,9 +6,12 @@ from pathlib import Path
 
 import requests
 from TikTokLive import TikTokLiveClient
+from TikTokLive.client.errors import UserNotFoundError
+from TikTokLive.client.web.routes import FetchRoomIdLiveHTMLRoute
 
 USERNAME = "Kenny_ctmd"
 STATE_FILE = Path("live_state.json")
+LIVE_URL = f"https://www.tiktok.com/@{USERNAME}/live"
 
 
 def send_botghost_notification() -> None:
@@ -20,7 +23,7 @@ def send_botghost_notification() -> None:
 
     message = (
         f"🔴 **Kenny is LIVE on TikTok!**\n"
-        f"https://www.tiktok.com/@{USERNAME}/live"
+        f"{LIVE_URL}"
     )
 
     response = requests.post(
@@ -49,13 +52,56 @@ def send_botghost_notification() -> None:
     print("BotGhost webhook accepted the LIVE notification.")
 
 
+async def check_live_status(client: TikTokLiveClient) -> bool:
+    """Try TikTokLive's normal status check, then its live-page room-ID fallback."""
+    try:
+        return await client.is_live()
+    except UserNotFoundError as original_error:
+        print(
+            "TikTok's direct username live-check rejected this account. "
+            "Trying the public LIVE page's room ID instead."
+        )
+
+        try:
+            page = requests.get(
+                LIVE_URL,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/131.0.0.0 Safari/537.36"
+                    )
+                },
+                timeout=20,
+            )
+            page.raise_for_status()
+
+            room_id = FetchRoomIdLiveHTMLRoute.parse_room_id(page.text)
+            statuses = await client.web.fetch_is_live.fetch_is_live_room_ids(
+                int(room_id)
+            )
+
+            if not statuses:
+                raise RuntimeError("TikTok returned no LIVE status for the room ID.")
+
+            return bool(statuses[0])
+        except Exception as fallback_error:
+            raise RuntimeError(
+                "Both TikTok LIVE checks failed. "
+                f"Username check: {original_error}. "
+                f"LIVE-page fallback: {fallback_error}"
+            ) from fallback_error
+
+
 async def main() -> None:
     client = TikTokLiveClient(unique_id=f"@{USERNAME}")
 
     try:
-        is_live = await client.is_live()
+        is_live = await check_live_status(client)
     except Exception as exc:
         raise RuntimeError(f"TikTok LIVE status check failed: {exc}") from exc
+    finally:
+        await client.web.close()
 
     previous_state = None
     if STATE_FILE.exists():
